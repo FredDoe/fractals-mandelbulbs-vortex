@@ -1,0 +1,493 @@
+{
+    "userName": "qliqit",
+    "date": "2025-04-11T18:52:08.819Z",
+    "numShaders": 14,
+    "shaders": [
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "w3B3RV",
+                "date": "0",
+                "viewed": 0,
+                "name": "Mandelbulb Derivative",
+                "description": "3D Fractal by Godfred Doe for Numerical Analysis (Tour of Scientific Computing)",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "fractal",
+                    "godfreddoe",
+                    "numericanalysis"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "#if HW_PERFORMANCE==0\n#define AA 1\n#else\n#define AA 2  // make AA 1 for slow machines or 3 for fast machines\n#endif\n\n// https://iquilezles.org/articles/intersectors\nvec2 isphere( in vec4 sph, in vec3 ro, in vec3 rd )\n{\n    vec3 oc = ro - sph.xyz;\n\tfloat b = dot(oc,rd);\n\tfloat c = dot(oc,oc) - sph.w*sph.w;\n    float h = b*b - c;\n    if( h<0.0 ) return vec2(-1.0);\n    h = sqrt( h );\n    return -b + vec2(-h,h);\n}\n\n// https://iquilezles.org/articles/mandelbulb\nfloat map( in vec3 p, out vec4 resColor )\n{\n    vec3 w = p;\n    float m = dot(w,w);\n\n    vec4 trap = vec4(abs(w),m);\n\tfloat dz = 1.0;\n    \n\tfor( int i=0; i<4; i++ )\n    {\n#if 0\n        // polynomial version (no trigonometrics, but MUCH slower)\n        float m2 = m*m;\n        float m4 = m2*m2;\n\t\tdz = 8.0*sqrt(m4*m2*m)*dz + 1.0;\n\n        float x = w.x; float x2 = x*x; float x4 = x2*x2;\n        float y = w.y; float y2 = y*y; float y4 = y2*y2;\n        float z = w.z; float z2 = z*z; float z4 = z2*z2;\n\n        float k3 = x2 + z2;\n        float k2 = inversesqrt( k3*k3*k3*k3*k3*k3*k3 );\n        float k1 = x4 + y4 + z4 - 6.0*y2*z2 - 6.0*x2*y2 + 2.0*z2*x2;\n        float k4 = x2 - y2 + z2;\n\n        w.x = p.x +  64.0*x*y*z*(x2-z2)*k4*(x4-6.0*x2*z2+z4)*k1*k2;\n        w.y = p.y + -16.0*y2*k3*k4*k4 + k1*k1;\n        w.z = p.z +  -8.0*y*k4*(x4*x4 - 28.0*x4*x2*z2 + 70.0*x4*z4 - 28.0*x2*z2*z4 + z4*z4)*k1*k2;\n#else\n        // trigonometric version (MUCH faster than polynomial)\n        \n        // dz = 8*z^7*dz\n\t\tdz = 8.0*pow(m,3.5)*dz + 1.0;\n      \n        // z = z^8+c\n        float r = length(w);\n        float b = 8.0*acos( w.y/r);\n        float a = 8.0*atan( w.x, w.z );\n        w = p + pow(r,8.0) * vec3( sin(b)*sin(a), cos(b), sin(b)*cos(a) );\n#endif        \n        \n        trap = min( trap, vec4(abs(w),m) );\n\n        m = dot(w,w);\n\t\tif( m > 256.0 )\n            break;\n    }\n\n    resColor = vec4(m,trap.yzw);\n\n    // distance estimation (through the Hubbard-Douady potential)\n    return 0.25*log(m)*sqrt(m)/dz;\n}\n\n// https://iquilezles.org/articles/normalsSDF\nvec3 calcNormal( in vec3 pos, in float t, in float px )\n{\n    vec4 tmp;\n    vec2 e = vec2(1.0,-1.0)*0.5773*0.25*px;\n    return normalize( e.xyy*map( pos + e.xyy,tmp ) + \n\t\t\t\t\t  e.yyx*map( pos + e.yyx,tmp ) + \n\t\t\t\t\t  e.yxy*map( pos + e.yxy,tmp ) + \n\t\t\t\t\t  e.xxx*map( pos + e.xxx,tmp ) );\n}\n\n// https://iquilezles.org/articles/rmshadows\nfloat softshadow( in vec3 ro, in vec3 rd, in float k )\n{\n    // bounding sphere\n    float tmax = isphere( vec4(0.0,0.0,0.0,1.25), ro, rd ).y;\n    \n    // raymarch fractal\n    float res = 1.0;\n    float t = 0.0;\n    for( int i=0; i<64 && t<tmax; i++ )\n    {\n        vec4 kk;\n        float h = map(ro + rd*t, kk);\n        res = min( res, k*h/t );\n        if( res<0.001 ) break;\n        t += clamp( h, 0.01, 0.2 );\n    }\n    return clamp( res, 0.0, 1.0 );\n}\n\nfloat raycast( in vec3 ro, in vec3 rd, out vec4 rescol, in float px )\n{\n    float res = -1.0;\n\n    // bounding sphere\n    vec2 dis = isphere( vec4(0.0,0.0,0.0,1.25), ro, rd );\n    if( dis.y<0.0 ) return -1.0;\n    dis.x = max( dis.x, 0.0 );\n    dis.y = min( dis.y, 10.0 );\n\n    // raymarch fractal distance field\n\tvec4 trap;\n\n\tfloat t = dis.x;\n\tfor( int i=0; i<128; i++  )\n    { \n        vec3 pos = ro + rd*t;\n        float th = 0.25*px*t;\n\t\tfloat h = map( pos, trap );\n\t\tif( t>dis.y || h<th ) break;\n        t += h;\n    }\n    \n    if( t<dis.y )\n    {\n        rescol = trap;\n        res = t;\n    }\n\n    return res;\n}\n\nconst vec3 light1 = vec3(  0.577, 0.577, -0.577 );\nconst vec3 light2 = vec3( -0.707, 0.000,  0.707 );\n\nvec3 refVector( in vec3 v, in vec3 n )\n{\n    return v;\n    float k = dot(v,n);\n    //return (k>0.0) ? v : -v;\n    return (k>0.0) ? v : v-2.0*n*k;\n}\n\n\nvec3 render( in vec2 p, in mat4 cam )\n{\n\t// ray setup\n    const float fle = 1.5;\n\n    vec2  sp = (2.0*p-iResolution.xy) / iResolution.y;\n    float px = 2.0/(iResolution.y*fle);\n\n    vec3  ro = vec3( cam[0].w, cam[1].w, cam[2].w );\n\tvec3  rd = normalize( (cam*vec4(sp,fle,0.0)).xyz );\n\n    // intersect fractal\n\tvec4 tra;\n    float t = raycast( ro, rd, tra, px );\n    \n\tvec3 col;\n\n    // color sky\n    if( t<0.0 )\n    {\n     \tcol  = vec3(0.8,.9,1.1)*(0.6+0.4*rd.y);\n\t\tcol += 5.0*vec3(0.8,0.7,0.5)*pow( clamp(dot(rd,light1),0.0,1.0), 32.0 );\n\t}\n    // color fractal\n\telse\n\t{\n        // color\n        col = vec3(0.01);\n\t\tcol = mix( col, vec3(0.10,0.20,0.30), clamp(tra.y,0.0,1.0) );\n\t \tcol = mix( col, vec3(0.02,0.10,0.30), clamp(tra.z*tra.z,0.0,1.0) );\n        col = mix( col, vec3(0.30,0.10,0.02), clamp(pow(tra.w,6.0),0.0,1.0) );\n        col *= 0.5;\n        \n        // lighting terms\n        vec3  pos = ro + t*rd;\n        vec3  nor = calcNormal( pos, t, px );\n        \n        nor = refVector(nor,-rd);\n        \n        vec3  hal = normalize( light1-rd);\n        vec3  ref = reflect( rd, nor );\n        float occ = clamp(0.05*log(tra.x),0.0,1.0);\n        float fac = clamp(1.0+dot(rd,nor),0.0,1.0);\n\n        // sun\n        float sha1 = softshadow( pos+0.001*nor, light1, 32.0 );\n        float dif1 = clamp( dot( light1, nor ), 0.0, 1.0 )*sha1;\n        float spe1 = pow( clamp(dot(nor,hal),0.0,1.0), 32.0 )*dif1*(0.04+0.96*pow(clamp(1.0-dot(hal,light1),0.0,1.0),5.0));\n        // bounce\n        float dif2 = clamp( 0.5 + 0.5*dot( light2, nor ), 0.0, 1.0 )*occ;\n        // sky\n        float dif3 = (0.7+0.3*nor.y)*(0.2+0.8*occ);\n        \n\t\tvec3 lin = vec3(0.0); \n\t\t     lin += 12.0*vec3(1.50,1.10,0.70)*dif1;\n\t\t     lin +=  4.0*vec3(0.25,0.20,0.15)*dif2;\n        \t lin +=  1.5*vec3(0.10,0.20,0.30)*dif3;\n             lin +=  2.5*vec3(0.35,0.30,0.25)*(0.05+0.95*occ);\n        \t lin +=  4.0*fac*occ;\n\t\tcol *= lin;\n\t\tcol = pow( col, vec3(0.7,0.9,1.0) );\n        col += spe1*15.0;\n    }\n\n    // gamma\n\tcol = pow( col, vec3(0.4545) );\n    \n    // vignette\n    col *= 1.0 - 0.05*length(sp);\n\n    return col;\n}\n    \nvoid mainImage( out vec4 fragColor, in vec2 fragCoord )\n{\n    float time = iTime*.1;\n\n    // camera\n\tfloat di = 1.4+0.1*cos(.29*time);\n\tvec3  ro = di*vec3( cos(.33*time), 0.8*sin(.37*time), sin(.31*time) );\n\tvec3  ta = vec3(0.0,0.1,0.0);\n\tfloat cr = 0.5*cos(0.1*time);\n\n    // camera matrix\n\tvec3 cp = vec3(sin(cr), cos(cr),0.0);\n    vec3 cw = normalize(ta-ro);\n\tvec3 cu = normalize(cross(cw,cp));\n\tvec3 cv =          (cross(cu,cw));\n    mat4 cam = mat4( cu, ro.x, cv, ro.y, cw, ro.z, 0.0, 0.0, 0.0, 1.0 );\n\n    // render\n    #if AA<2\n\tvec3 col = render(  fragCoord, cam );\n    #else\n    #define ZERO (min(iFrame,0))\n    vec3 col = vec3(0.0);\n    for( int j=ZERO; j<AA; j++ )\n    for( int i=ZERO; i<AA; i++ )\n    {\n\t    col += render( fragCoord + (vec2(i,j)/float(AA)), cam );\n    }\n\tcol /= float(AA*AA);\n    #endif\n\n\tfragColor = vec4( col, 1.0 );\n}",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                }
+            ]
+        },
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "wXB3RV",
+                "date": "0",
+                "viewed": 0,
+                "name": "Mandelbulb Gray",
+                "description": "Created by Godfred Doe for Numerical Analysis (Tour of Scientific Computing)",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "fractal",
+                    "numerical",
+                    "analysis",
+                    "godfreddoe"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "const int NUM_STEPS = 40;\nconst float CELL_SIZE = 0.3;\nconst float RADIUS = 0.1;\nconst float EPSILON = 1e-3;\n\nconst vec3 RED = vec3(1.0, 0.0, 0.0);\nconst vec3 ORANGE = vec3(1.0, 0.647, 0.0);\nconst vec3 YELLOW = vec3(1.0, 1.0, 0.0);\nconst vec3 GREEN = vec3(0.0, 1.0, 0.0);\nconst vec3 INDIGO = vec3(0.0, 0.5, 1.0);\nconst vec3 BLUE = vec3(0.0, 0.0, 1.0);\nconst vec3 PURPLE = vec3(0.45, 0.0, 1.0);\n\n\n// reference: https://www.shadertoy.com/view/Ms2SD1\nfloat hash( vec2 p ) {\n\tfloat h = dot(p,vec2(127.1,311.7));\t\n    return fract(sin(h)*43758.5453123);\n}\n\nfloat noise( in vec2 p ) {\n    vec2 i = floor( p );\n    vec2 f = fract( p );\t\n\tvec2 u = f*f*(3.0-2.0*f);\n    return -1.0+2.0*mix( mix( hash( i + vec2(0.0,0.0) ), \n                     hash( i + vec2(1.0,0.0) ), u.x),\n                mix( hash( i + vec2(0.0,1.0) ), \n                     hash( i + vec2(1.0,1.0) ),  u.x), u.y);\n}\n\n// polynomial smooth min (k = 0.1) from iq;\nfloat smin( float a, float b, float k )\n{\n    float h = clamp( 0.5+0.5*(b-a)/k, 0.0, 1.0 );\n    return mix( b, a, h ) - k*h*(1.0-h);\n}\n\n\n\nfloat sdSphere( vec3 p, float s )\n{\n  return length(p)-s;\n}\n\nfloat sdTorus( vec3 p, vec2 t )\n{\n  vec2 q = vec2(length(p.xz)-t.x,p.y);\n  return length(q)-t.y;\n}\n\nfloat opRepSphere( vec3 p, vec3 c )\n{\n    vec3 q = mod(p,c)-0.5*c;\n    return sdSphere( q, RADIUS );\n}\n\nfloat opRepTorus( vec3 p, vec3 c, vec2 t )\n{\n    vec3 q = mod(p,c)-0.5*c;\n    return sdTorus( q, t );\n}\n\n\nfloat hash3d( vec3 p ) {\n    float h = dot(p,vec3(1.127,3.117, 2.038));\t\n    return fract(sin(h)*71451.5453123);\n}\n\nmat2 rot( float angle ) {\n    float c = cos(angle);\n    float s = sin(angle);\n    return mat2(c, -s, s, c);\n}\n\nfloat noise3d( in vec3 p ) {\n    vec3 idx = vec3(fract(sin(dot(p / 0.3, vec3(2.5,3.46,1.29))) * 12394.426),\n                   fract(sin(dot(p / 0.17, vec3(3.987,2.567,3.76))) * 52422.82465),\n                   fract(sin(dot(p / 0.44, vec3(6.32,3.87,5.24))) * 34256.267));\n    //p.z *= p.z;\n    //p.y *= p.y;\n    //p.z = mix(p.y, p.z, idx.x * (1.0 - idx.y));\n    p.xz = mod(p.xz - 0.5 * CELL_SIZE, vec2(CELL_SIZE));\n    p.xz = rot(fract(sin(dot(idx.xz, vec2(3.124,1.75)))) * 312.2) * p.xz;\n    float s = hash3d(1e4 * p + idx);\n    return s;\n}\n\nvec3 colorLookup( in vec3 p ) {\n    float freq = 1e-7;\n    float f = noise3d(p * freq);\n    if (f < 1.0 / 7.0) return RED;\n    if (f < 2.0 / 7.0) return ORANGE;\n    if (f < 3.0 / 7.0) return YELLOW;\n    if (f < 4.0 / 7.0) return GREEN;\n    if (f < 5.0 / 7.0) return INDIGO;\n    if (f < 6.0 / 7.0) return BLUE;\n    return PURPLE;\n}\n\nfloat map (in vec3 p) {\n    float bailout = 2.0;\n    float power = 3.0 * sin(iTime / 5.0) + 6.0;\n    vec3 z = p;\n    float dr = 1.0;\n    float r = 0.0;\n    for (int i = 0; i < 200; i++) {\n        r = length(z);\n        if (r>bailout) break;\n\n        // convert to polar coordinates\n        float theta = acos(z.z/r);\n        float phi = atan(z.y,z.x);\n        dr =  pow( r, power-1.0)*power*dr + 1.0;\n\n        // scale and rotate the point\n        float zr = pow( r,power);\n        theta = theta*power;\n        phi = phi*power;\n\n        // convert back to cartesian coordinates\n        z = zr*vec3(sin(theta)*cos(phi), sin(phi)*sin(theta), cos(theta));\n        z += p;\n    }\n    return 0.5*log(r)*r/dr;\n}\n\nvec3 calcNormal( in vec3 pos )\n{\n    vec2 e = vec2(1.0,-1.0)*0.5773*0.0005;\n    return normalize( e.xyy*map( pos + e.xyy ) + \n\t\t\t\t\t  e.yyx*map( pos + e.yyx ) + \n\t\t\t\t\t  e.yxy*map( pos + e.yxy ) + \n\t\t\t\t\t  e.xxx*map( pos + e.xxx ) );\n    /*\n\tvec3 eps = vec3( 0.0005, 0.0, 0.0 );\n\tvec3 nor = vec3(\n\t    map(pos+eps.xyy).x - map(pos-eps.xyy).x,\n\t    map(pos+eps.yxy).x - map(pos-eps.yxy).x,\n\t    map(pos+eps.yyx).x - map(pos-eps.yyx).x );\n\treturn normalize(nor);\n\t*/\n}\n\n\nbool interSect( vec3 ro, vec3 rd, out vec3 p ) {\n    float t = 0.0;\n    p = ro;\n    for (int i = 0; i < NUM_STEPS; i++) {\n        p = ro + t * rd;\n        float d = map(p);\n        if (abs(d) < EPSILON) {\n            return true;\n        }\n        t += d;\n    }\n    return false;\n}\n\nmat3 cam2world(vec3 ro, vec3 target, vec3 up) {\n    vec3 forward = normalize(target - ro);\n    vec3 right = cross(up, forward);\n    return mat3(right, up, forward);\n}\n\nvoid mainImage( out vec4 fragColor, in vec2 fragCoord )\n{\n    vec3 light_dir = normalize(vec3(0.3, 0.4, -0.5));\n\tvec2 uv = fragCoord.xy / iResolution.xy;\n    uv = uv * 2.0 - 1.0;\n    uv.x *= iResolution.x / iResolution.y;\n    \n    vec3 ro = vec3(rot(iTime / 5.0) * vec2(sin(iTime / 2.0) + 2.5, 0.0), 0.0);\n    //vec3 ro = vec3(rot(iTime / 5.0) * vec2(3.0, 0.0), 0.0);\n    vec3 target = vec3(0.0);\n    vec3 up = vec3(0.0, 0.0, 1.0);\n    vec3 rd = cam2world(ro, target, up) * normalize(vec3(uv, 2.1));\n    float t = 0.0;\n    vec3 p, norm;\n    if (interSect(ro, rd, p)) {\n    //if (rayTracing(ro, rd, t)) {\n    //if (abs(sdf(ro + t * rd)) < EPSILON) {\n        norm = calcNormal(p);\n        vec3 baseColor = colorLookup(p);\n        float light_pow = 2.0;\n        float brdf = 0.4;\n        vec3 diff = vec3(dot(light_dir, norm) * brdf * light_pow);\n        fragColor = vec4(mix(baseColor, diff, 0.99), 1.0);\n        //fragColor = vec4(1.0, 0.0, 0.0, 1.0);\n    } else {\n        fragColor = vec4(0,0,0,1.0);\n    }\n    fragColor.xyz = pow(fragColor.xyz, vec3(1.0/2.2));\n\t\n}",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                }
+            ]
+        },
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "t3SGzV",
+                "date": "0",
+                "viewed": 0,
+                "name": "Mandelbulb Ambient Occlusion ",
+                "description": "Created by Godfred Doe for Numerical Analysis (Tour of Scientific Computing)",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "3d",
+                    "fractal",
+                    "mandelbulb",
+                    "freddoe"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "#define distfar 6.0\n#define iterations 4\n\nfloat calcfractal(vec3 coord) {\n    vec3 orbit = coord;\n    float dz = 1.0;\n    \n    for (int i=0; i<iterations; i++) {\n        \n        float r = length(orbit);\n    \tfloat o = acos(orbit.z/r);\n    \tfloat p = atan(orbit.y/orbit.x);\n        \n        dz = 8.0*r*r*r*r*r*r*r*dz + 1.0;\n        \n        r = r*r*r*r*r*r*r*r;\n        o = 8.0*o;\n        p = 8.0*p;\n        \n        orbit = vec3( r*sin(o)*cos(p), r*sin(o)*sin(p), r*cos(o) ) + coord;\n        \n        if (dot(orbit,orbit) > 4.0) break;\n    }\n    float z = length(orbit);\n    return 0.5*z*log(z)/dz;\n}\n\nvec2 map(vec3 p) {\n    return vec2(calcfractal(p.xzy),1.0);\n}\n\nvec3 trace(vec3 ro, vec3 rd) {\n    float t = 0.0;\n    for (float i = 0.0; i < 1000.0; i++) {\n        if (t>distfar) break;\n        vec2 h = map(ro + t*rd);\n        if (h.x < 0.0001) return vec3(t, h.y, i);\n        t += h.x;\n    }\n    return vec3(0.0);\n}\n\nvec3 calcnormal(vec3 p) {\n    vec2 e = vec2(0.0001,0.0);\n    vec3 n;\n    n.x = map(p+e.xyy).x - map(p-e.xyy).x;\n    n.y = map(p+e.yxy).x - map(p-e.yxy).x;\n    n.z = map(p+e.yyx).x - map(p-e.yyx).x;\n    return normalize(n);\n}\n\nfloat softshadow (vec3 ro, vec3 rd) {\n    float res = 1.0;\n    float t = 0.01;\n    for (float i = 0.0; i < 1000.0; i++) {\n        if (t>1.0) break;\n        vec2 h = map(ro + t*rd);\n        if (h.x < 0.0001) return 0.0;\n        res = min(res, 4.0*h.x/t);\n        t += h.x;\n    }\n    return res;\n}\n\n\nvoid mainImage( out vec4 fragColor, in vec2 fragCoord )\n{\n\tvec2 uv = fragCoord.xy / iResolution.xy;\n    uv = (2.0)*uv-1.0;\n    uv.x *= iResolution.x/iResolution.y;\n    \n    vec3 ro = vec3(0.0,0.0,-1.4);\n    vec3 rd = normalize(vec3(uv,1.5));\n    float the = 1.5*sin(iTime/30.0-1.0);\n    mat2 rmat = mat2(cos(the),sin(the),-sin(the),cos(the));\n    rd.yz *= rmat;\n    ro.yz *= rmat;\n    the = iTime/20.0;\n    rmat = mat2(cos(the),sin(the),-sin(the),cos(the));\n    rd.xz *= rmat;\n    ro.xz*= rmat;\n    \n    vec3 t = trace(ro, rd);\n    \n    vec3 col = vec3(0.8);\n    \n    if (t.z > 0.0) {\n        vec3 pos = ro + rd*t.x;\n        vec3 nor = calcnormal(pos);\n        vec3 lig = normalize(vec3(0.3,1.0,0.3));\n        vec3 rdy = dot(nor, rd) * nor;\n        vec3 rdx = rd - rdy;\n        vec3 ref = rdx - rdy;\n        \n        float occ = clamp(0.0,1.0,1.0/(1.0+pow(t.z/30.0,3.0)));\n        float sha = softshadow(pos, lig);\n        float dif = max(0.0,dot(lig,nor));\n        float sky = max(0.0,nor.y);\n        float ind = max(0.0,dot(-lig,nor));\n        float spec = pow( max(0.0,dot(ref,lig)) , 20.0);\n        \n        col  = dif*vec3(0.9,0.8,0.7)*vec3(sha);\n        col += sky*vec3(0.16,0.20,0.24)*occ;\n        col += ind*vec3(0.40,0.48,0.40)*occ;\n        col += 0.1*occ;\n        col += spec*sha*vec3(0.9,0.8,0.7);\n\n        \n        col = pow(col,vec3(0.45));\n    }\n    \n\tfragColor = vec4(col,1.0);\n    \n}",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                }
+            ]
+        },
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "w3S3zV",
+                "date": "0",
+                "viewed": 0,
+                "name": "Mandelbulb Shooting",
+                "description": "Created by Godfred Doe for Numerical Analysis (Tour of Scientific Computing)",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "3d",
+                    "fractal",
+                    "simple",
+                    "basic",
+                    "mandelbulb",
+                    "freddoe"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "#define EPSILON 0.001\n#define PI 3.141592\n#define MAX_DIST 256.0\n#define MAX_STEPS 256\n#define it 10\n\nvec3 makeRay(vec2 origin)\n{\n    vec2 res;\n    res.x = origin.x - iResolution.x * 0.5;\n    res.y = origin.y - iResolution.y * 0.5;\n    \n    return normalize(vec3(res / iResolution.yy, 1));\n}\n\nmat2 rot(float ang)\n{\n    float s = sin(ang);\n    float c = cos(ang);\n    return mat2(c, -s, s, c);\n}\n\nvec3 rotVec(vec3 p, vec3 r)\n{\n    p.yz *= rot(r.x);\n    p.xz *= rot(r.y);\n    p.xy *= rot(r.z);\n    return p;\n}\n\nfloat mandelBulb(vec3 p, vec3 fp, float power, vec3 ang)\n{\n    p -= fp;\n    p = rotVec(p, ang);\n    \n\tvec3 z = p;\n\tfloat r, theta, phi;\n\tfloat dr = 1.0;\n\t\n\tfor(int i = 0; i < it; ++i)\n    {\n\t\tr = length(z);\n        \n\t\tif(r > 2.0)\n            continue;\n        \n\t\ttheta = atan(z.y / z.x);\n        phi = asin(z.z / r) + iTime;\n\t\t\n\t\tdr = pow(r, power - 1.0) * dr * power + 1.0;\n\t\tr = pow(r, power);\n        \n\t\ttheta = theta * power;\n\t\tphi = phi * power;\n\t\t\n\t\tz = r * vec3(cos(theta) * cos(phi),\n                     sin(theta) * cos(phi), \n                     sin(phi)) + p;\n\t}\n    \n\treturn 0.5 * log(r) * r / dr;\n}\n\nfloat getDist(vec3 origin)\n{\n    vec3 fp = vec3(0);\n    vec3 fr = vec3(0, PI + PI / 4.0, 0);\n    float power = 8.0;\n    \n    return mandelBulb(origin, fp, power, fr);\n}\n\nvec2 rayMarch(vec3 origin, vec3 direct)\n{\n    float res = 0.0;\n    \n    for (int i = 0; i < MAX_STEPS; i++)\n    {\n        vec3 tmp = origin + direct * res;\n        float d = getDist(tmp);\n        res += d;\n        \n        if (res >= MAX_DIST || d < EPSILON)\n        \treturn vec2(res, float(i));\n    }\n\n    return vec2(res, float(MAX_STEPS));\n}\n\nvoid mainImage( out vec4 fragColor, in vec2 fragCoord )\n{\n    vec3 origin = vec3(0, 0, -3);\n    vec3 dir = makeRay(fragCoord);\n    \n    vec2 res = rayMarch(origin, dir);\n    float d = res.x;\n    vec3 col;\n    \n    vec3 startCol = vec3(cos(iTime) * 0.25 + 0.75, 0, 0);\n    vec3 finCol = vec3(0, 0, sin(iTime) * 0.25 + 0.75);\n    float delta = 0.5;\n    \n    if (d < MAX_DIST)\n    {\n    \tvec3 p = origin + d * dir;\n        delta = length(p) / 2.0;\n    }\n    \n    col = mix(startCol, finCol, delta) * res.y / float(MAX_STEPS) * 5.0;\n    fragColor = vec4(col, 1);\n}",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                }
+            ]
+        },
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "W3jGRK",
+                "date": "0",
+                "viewed": 0,
+                "name": "Mandelbulb Broccoli",
+                "description": "3D Fractal for Numerical Analysis (Tour of Scientific Computing) created by Godfred Doe",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "3d",
+                    "fractal",
+                    "mandelbulb",
+                    "freddoe"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "vec2 NormalizeScreenCoords(vec2 screenCoord)\n{\n    vec2 result = 2.0 * (screenCoord/iResolution.xy - 0.5);\n    result.x *= iResolution.x/iResolution.y;\n    return result;\n}\n\nfloat CheckersGradBox(vec2 p)\n{ // iquilezles.org/articles/checkerfiltering\n    vec2 w = fwidth(p) + .001;\n    vec2 i = 2.0 * (abs(fract((p-.5*w)*.5)-.5)-abs(fract((p+.5*w)*.5)-.5))/w;\n    return .5 - .5*i.x*i.y;\n}\n\nmat3 ComputeRotationMatrix(const float x, const float y, const float z)\n{ // NOTE: mat = (firstCOLUMN, secondCOLUMN, thirdCOLUMN);\n    mat3 o = mat3(0);\n    \n   \to  = mat3( 1.0, 0.0\t,  0.0,\t\t\n             0.0, cos(x), -sin(x),\n             0.0, sin(x), cos(x)  );\n    \n\to *= mat3( cos(y), 0.0, sin(y),\n               0.0\t , 1.0, 0.0,\n               -sin(y), 0.0, cos(y) );\n    \n\to *= mat3( cos(z), -sin(z), 0.0,\n               sin(z), cos(z) , 0.0,\n               0.0\t , 0.0    , 1.0 );\n    return o;\n}\n///////////////////////////////////////////////////////////////////////////////\n\n// Configure the scene\nvoid SceneInit(out Scene s)\n{\n    // Setup camera\n    s.cam.pos \t  = vec3(0,0,-2.5);\n    s.cam.forward = vec3(0,0,1);\n    s.cam.right   = normalize(cross(vec3(0, 1, 0), s.cam.forward));\n    s.cam.up      = normalize(cross(s.cam.forward, s.cam.right));\n    s.cam.fPersp  = 2.0;\n\n    // Main Light\n    Light dirLight;\n\tdirLight.type      = DIRECTIONAL;//POINT;\n    dirLight.pos       = vec3(2,3,-1);\n    dirLight.dir       = normalize(-dirLight.pos);\n    dirLight.color \t   = vec3(0.35,0.30,0.25);\n    dirLight.range     = MAX_DISTANCE;\n    dirLight.intensity = 3.;\n\n    s.lights[0] = dirLight;\n    \n    // Mandelbulb\n    Shape mb;\n    mb.blendType = NO_OP;\n    mb.type      = MANDELBULB;\n    mb.radii     = vec2(8.+ 2.*-cos(iTime*.1), 2);\n    mb.pos       = vec3(0);\n    mb.scale     = vec3(1);\n    mb.rot  \t = ComputeRotationMatrix(cos(iTime*.25), sin(iTime*.25), 0.);\n    mb.color     = vec4(VERMILION, 1);\n    mb.normal    = vec4(0);\n    mb.glossy    = 0.;\n    \n    s.objects[0] = mb;\n\n    return;\n}\n\nvoid Blend(inout Shape current, inout float currentD,\n           Shape candidate, float candidateD)\n{ // Based on Iñigo Quilez's smooth min algorithm:\n  // iquilezles.org/articles/smin\n    \n    float b = (candidate.blendStrength > 0.) ? candidate.blendStrength : EPSILON;\n    float h = clamp(.5+.5*(candidateD-currentD)/b, 0., 1.);\n    \n    currentD       = mix(candidateD, currentD, h) -\n                         candidate.blendStrength * h * (1.- h);\n    current.color  = mix(candidate.color, current.color, h);\n    current.normal = mix(candidate.normal, current.normal, h);\n    \n    // TODO: Find a better way to interpolate the texture / patterns\n    current.type   = (h>=.5) ? current.type   : candidate.type;\n\t// TODO: Find a better way to interpolate glossiness\n    current.glossy = (h>=.5) ? current.glossy : candidate.glossy;\n}\n\nfloat GetShapeDst(Shape s, vec3 eye, out vec4 aux)\n{\n    float o = MAX_DISTANCE + 1.;\n    vec3 p = s.rot * (s.pos-eye);\n    \n    switch(s.type)\n    {\n        case FLOOR_PLANE:\n        \to = PlaneSDF(eye, s.pos, s.normal);\n        \tbreak;\n        case SPHERE:\n           \to = SphereSDF(eye, s.pos, s.radii.x);\n        \tbreak;\n        case BOX:\n           \to = BoxSDF(p, s.scale);\n        \tbreak;\n        case TORUS:\n        \to = TorusSDF(p, s.radii);\n        \tbreak;\n        case MANDELBULB:\n        \to = MandelbulbSDF(p, s.radii.x, s.radii.y, aux);\n        \tbreak;\n        default:\n        \tbreak;\n    }\n    \n    return o;\n}\n\nRayIntersection GetNearestShape(vec3 origin)\n{\n    RayIntersection o;\n    o.dist = MAX_DISTANCE;\n    \n    float shapeD;\n    Shape s;\n    \n    for (int i=0; i<NUM_SHAPES; i++)\n    {\n        s = scene.objects[i];\n\t\t\n        \n        if (s.type == MANDELBULB)\n        {\n            shapeD = GetShapeDst(s, origin, s.color);\n        }\n        else\n        {\n            vec4 trash = vec4(0);\n            shapeD = GetShapeDst(s, origin, trash);\n        }\n        \n        switch (s.blendType)\n        {\n            case NO_OP:\n                if (shapeD<o.dist)\n        \t\t{\n            \t\to.shape = s;\n            \t\to.dist  = shapeD;\n        \t\t}\n            \tbreak;\n            \n  \t\t\tcase BLEND:\n            \tBlend(o.shape, o.dist, s, shapeD);\n            \tbreak;\n            \n            case CUT: // TODO\n            \tbreak;\n            \n            case MASK: // TODO\n            \tbreak;\n\t\t\t\n            default:\n            \tbreak;\n        }\n    }\n    \n    return o;\n}\n\nvec3 ComputeNormals(vec3 p)\n{\n    vec3 o;\n    \n    vec3 epsilonX = vec3(EPSILON, 0, 0);\n    vec3 epsilonY = vec3(0, EPSILON, 0);\n    vec3 epsilonZ = vec3(0, 0, EPSILON);\n    \n    // To estimate the normal in an axis, from a surface point, we move slightly\n    // in that axis and get the changing in the distance to the surface itself.\n    // If the change is 0 or really small it means the surface doesn't change in that\n    // direction, so its normal in that point won't have that axis component.\n    float reference = GetNearestShape(p).dist;\n    o.x = GetNearestShape(p+epsilonX).dist - reference;\n    o.y = GetNearestShape(p+epsilonY).dist - reference;\n    o.z = GetNearestShape(p+epsilonZ).dist - reference;\n    \n    return normalize(o);\n}\n\nRayIntersection CastRay(const Ray r, const float max_dst)\n{\n    RayIntersection o;\n    o.ray         = r;\n \to.dist        = MAX_DISTANCE;\n    o.shadow      = MAX_DISTANCE;\n    o.shape.type  = NO_SHAPE;\n    \n    int i = 0;\n    float travelDist = EPSILON * .5;\n    RayIntersection tmpRI;\n    \n    while (travelDist<max_dst && i<MAX_ITERATIONS)\n    {\n        i++;\n\n\t\ttmpRI = GetNearestShape(r.o + r.d*travelDist);\n        \n        travelDist += tmpRI.dist;\n        \n        // Soft shadows\n        o.shadow = min(o.shadow, SOFT_SHADOWS_C*tmpRI.dist/travelDist);\n        \n        if (tmpRI.dist < EPSILON)\n        { // We collided\n            o.pos      = r.o + r.d*travelDist;\n            o.shape    = tmpRI.shape;\n            o.dist     = travelDist;\n\n            if (o.shape.normal == vec4(0))\n            { // Avoid computing the normals of shapes that already have them\n              // (such as planes)\n            \to.shape.normal = vec4(ComputeNormals(o.pos), 1);\n            }\n            break;\n        }\n    }\n    \n    if (o.shape.type == FLOOR_PLANE)\n    {\n    \to.shape.color = vec4(vec3(CheckersGradBox(o.pos.xz*.5)*.5 + .25), 1);\n        o.shape.glossy *= o.shape.color.r;\n    }\n\n    o.numIt = i;\n    return o;\n}\n\nRay GetCameraRay(Camera cam, const vec2 uv)\n{\n    Ray o;\n    \n    o.o = cam.pos;\n  \to.d = normalize(uv.x * cam.right +\n                    uv.y * cam.up +\n                    cam.forward * cam.fPersp);\n    return o;\n}\n\nvoid ApplyFog(inout vec3 c, const float d)\n{\n    float m = exp(-d*d*.001);\n    c = mix(FOG_COLOR, c, m);\n}\n\nvoid SmoothCubeMapHorizon(inout vec3 c, const vec3 cm, float d)\n{\n    float m = exp(-d*d*.001);\n    c = mix(cm, c, m);\n}\n\nfloat ComputeShadow(const vec3 p, const vec3 n, const vec3 L, const float d2l)\n{\n    float shadow = 1.0;\n    \n    Ray r;\n    r.o = p + n*SHADOW_BIAS; // Without this, the ray doesn't leave the surface\n    r.d = L;\n    \n    RayIntersection ri = CastRay(r, d2l);\n    if (ri.shape.type != NO_SHAPE) shadow = 0.0;\n    else shadow = clamp(ri.shadow, .0,1.0);\n\n    return shadow;\n}\n\nfloat ComputeAO(const vec3 p, const vec3 n)\n{\n    float ao = 0.0;\n    \n    int   i = 0;\n    float r,d;\n    while (i<AO_NUM_STEPS)\n    {\n        i++;\n        d = AO_STEP_SIZE * float(i);\n    \tr = GetNearestShape(p + n*d).dist;\n   \n        ao += max(0.0, (d-r)/d);\n    }\n    \n    return 1.0 - ao*AO_INTENSITY;\n}\n\nvoid DoTheLighting(RayIntersection ri, out vec4 c)\n{\n    float attByDst;\n    float NoL, specAngle;\n    float shadow, ao;\n    float d2l = MAX_DISTANCE;\n    vec3  diffuse, specular;\n    vec3  L, halfVec;\n    vec4  ambient;\n    \n    if (ri.shape.type == MANDELBULB)\n    {           \n        // Base orbit trap color\n        vec3 orbitColor = vec3(0.01);\n        orbitColor = mix(orbitColor, vec3(0.6, 0.37, 0.22),\n                         clamp(pow(abs(ri.shape.color.y), 1.), 0., 1.));\n        orbitColor = mix(orbitColor, vec3(0.6, 0.37, 0.22),\n                         clamp(pow(abs(ri.shape.color.z), 1.), 0., 1.));\n        orbitColor = mix(orbitColor, vec3(0.1, 0.3, 0.1),\n                         clamp(pow(abs(ri.shape.color.w), 16.), 0., 1.));\n        \n        // Ambient Occlusion\n        // NOTE: The orbit trap based AO estimation is more aesthetically pleasing\n        //       (and cheaper) than the more precise version I already had in the\n        //\t\t 'DoTheLighting' function.\n        ao = clamp(0.1 * log(ri.shape.color.x), 0., 1.);\n        \n        ri.shape.color.rgb = orbitColor;\n    }\n    else\n    {\n        ao = ComputeAO(ri.pos, ri.shape.normal.xyz);\n    }\n    \n\tfor (int i=0; i<NUM_LIGHTS; i++)\n    {\n        if (scene.lights[i].type == DIRECTIONAL)\n        {\n\n            L \t\t = -scene.lights[i].dir;\n            attByDst = 1.0;\n        }\n        else if (scene.lights[i].type == POINT)\n        {\n            vec3  p2l = scene.lights[i].pos - ri.pos;\n            d2l = length(p2l); \n            if (d2l > scene.lights[i].range) continue;\n            attByDst = (scene.lights[i].range - d2l) /\n                \t\tmax(scene.lights[i].range, EPSILON);\n            L = normalize(p2l);\n        }\n\n        // BLINN-PHONG\n        // Diffuse component\n        NoL      = clamp(dot(L, ri.shape.normal.xyz), .0, 1.0);\n        diffuse += NoL * attByDst *\n            \t   scene.lights[i].color * scene.lights[i].intensity;\n        \n        // Specular component\n        if (NoL >= .0 && ri.shape.glossy > .0)\n        {\n            halfVec    = normalize(-ri.ray.d + L);\n            specAngle  = clamp(dot(ri.shape.normal.rgb, halfVec), .0, 1.0);\n            specular  += pow(abs(specAngle), ri.shape.glossy*512.) * attByDst *\n                \t\t scene.lights[i].color * scene.lights[i].intensity;\n        }\n\n        shadow += ComputeShadow(ri.pos, ri.shape.normal.xyz, L, d2l);\n    }\n    \n    ambient = vec4(AMBIENT_LIGHT, 1);\n\n    // Combine all the illumination components\n    c  = ri.shape.color * vec4(diffuse, 1);\n    c *= shadow * ao;\n    c += ri.shape.color * ambient;\n\tc += vec4(specular, 0);\n    \n    // DEBUG: Normals\n    //c = ri.shape.normal;\n    // DEBUG: Ambient Occlusion\n    //c = vec4(ao,ao*.5,0,1);\n    \n    // NOTE: Applying the fog here keeps the sky gradient,\n    // but makes the horizon look too sharp\n\t//ApplyFog(c.rgb, ri.distance);\n}\n\nvec3 ComputeReflection(inout Ray r, const float g)\n{\n    RayIntersection ri = CastRay(r, MAX_REFLECTION_DIST);\n    \n    r = ri.ray;\n    \n    vec4 o = vec4(BLACK,1);\n    DoTheLighting(ri, o);\n    \n    return mix(BLACK, o.rgb, g).rgb * REFLECTION_INTENSITY * g;\n}\n\nvoid mainImage( out vec4 fragColor, in vec2 fragCoord )\n{\n    SceneInit(scene);\n    \n    vec2 uv = NormalizeScreenCoords(fragCoord);\n    Ray ray = GetCameraRay(scene.cam, uv);\n    \n    RayIntersection ri = CastRay(ray, MAX_DISTANCE);\n    \n\tif (ri.shape.type != NO_SHAPE)\n    { // Illuminate the object\n        DoTheLighting(ri, fragColor);\n    }\n    else\n    { // Sky\n        fragColor.rgb = mix(TEAL, SKY_COLOR, uv.y);\n    }\n    \n\t// \"Mist\"\n    fragColor.rgb += vec3(float(ri.numIt)/float(MAX_ITERATIONS)) *\n        \t\t\t FOG_DENSITY * FOG_COLOR;\n    \n    // Gamma\n    fragColor.rgb  = sqrt(fragColor.rgb);\n    // Vignette\n    fragColor.rgb *= 1. - VIGNETTE_STR * length(uv);\n    \n    // Just in case\n    fragColor.w = 1.;\n}",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                },
+                {
+                    "inputs": [],
+                    "outputs": [],
+                    "code": "// CONSTANTS ///////////////////////////////////////////\n// Usual colors\nconst vec3 BLACK     = vec3(0);\nconst vec3 WHITE     = vec3(1);\nconst vec3 RED    \t = vec3(1,0,0);\nconst vec3 GREEN  \t = vec3(0,1,0);\nconst vec3 BLUE   \t = vec3(0,0,1);\nconst vec3 TEAL   \t = vec3(.21, .46, .53);\nconst vec3 VERMILION = vec3(.89, .26, .2); \n\n// Scene info\nconst int   NUM_SHAPES    = 1;\nconst int   NUM_LIGHTS    = 1;\nconst float FOG_DENSITY   = 0.175;\nconst float VIGNETTE_STR  = 0.25;\nconst vec3  SKY_COLOR     = vec3(0, .25, .5);\nconst vec3  FOG_COLOR     = WHITE;\nconst vec3  AMBIENT_LIGHT = TEAL*0.1;\n\n// Ray marching variables\nconst int   MAX_ITERATIONS = 256;\nconst float MAX_DISTANCE   = 128.0;\nconst float EPSILON        = 0.0025;\n\n// Shadows\nconst float SHADOW_BIAS    = EPSILON * 50.0;\nconst float SOFT_SHADOWS_C = 16.0;\n\n// Ambient Occlusion\nconst int   AO_NUM_STEPS = 3;\nconst float AO_STEP_SIZE = 0.05;\nconst float AO_INTENSITY = 0.25;\n\n// Shape types\nconst int FLOOR_PLANE = 0;\nconst int SPHERE      = 1;\nconst int BOX         = 2;\nconst int TORUS       = 3;\nconst int MANDELBULB  = 4;\nconst int NO_SHAPE    = 999;\n\n// Blend operations\nconst int NO_OP = 0;\nconst int BLEND = 1;\nconst int CUT   = 2;\nconst int MASK  = 3;\n\n// Light types\nconst int DIRECTIONAL = 0;\nconst int POINT       = 1;\n\n// Reflections\nconst int   MAX_REFLECTION_STEPS = 1;\nconst float MAX_REFLECTION_DIST  = MAX_DISTANCE * .5;\nconst float REFLECTION_INTENSITY = .5;\n////////////////////////////////////////////////////////\n\n// SDFs ////////////////////////////////////////////////\n// iquilezles.org/articles/distfunctions\nfloat PlaneSDF(vec3 eye, vec3 p, vec4 n)\n{ // NOTE: n must be normalized\n    return dot(eye-p, n.xyz) + n.w;\n}\n\nfloat SphereSDF(vec3 eye, vec3 p, float r)\n{ \n\treturn distance(p,eye) - r;\n}\n\nfloat BoxSDF(vec3 p, vec3 b )\n{\n    vec3 d = abs(p) - b;\n    return length(max(d,0.0)) +\n        \tmin(max(d.x,max(d.y,d.z)),0.0);\n}\n\nfloat TorusSDF(vec3 p, vec2 radii)\n{\n\tvec2 q = vec2(length(p.xz) - radii.x, p.y);\n    return length(q) - radii.y;\n}\n\nfloat MandelbulbSDF(vec3 position,\n                    float power, float limit,\n                    inout vec4 orbitTraps)\n{\n    float rad,phi,theta; // radius, azimuth and inclination\n    float dr   = 1.0;\n    float rad2 = dot(position, position);\n    vec3  c = position;\n    \n    orbitTraps = vec4(abs(position), rad2);\n    \n    for (int i=0; i<4; i++)\n    {\n    \t// Convert to polar coordinates\n        rad   = length(c);\n        theta = acos(c.y / rad);\n        phi   = atan(c.x, c.z);\n        \n        dr = power * pow(rad, power-1.) * dr + 1.;\n        \n        // Scale and rotate\n    \trad    = pow(rad, power);\n   \t\tphi   *= power;\n    \ttheta *= power;\n        \n        // Back to cartesian\n        c.x  = sin(phi) * sin(theta);\n    \tc.y  = cos(theta);\n    \tc.z  = sin(theta) * cos(phi);\n    \tc   *= rad;\n    \t\n        c += position;\n        \n        orbitTraps = min(orbitTraps, vec4(abs(c), rad2));\n        \n        rad2 = dot(c,c);\n        if (rad2 > limit*limit) break;\n    }\n    \n    orbitTraps = vec4(rad2, orbitTraps.xyw); // Magnitude^2 | In X | In Y | Previous Magnitude^2\n\n    //color = vec4(rad, color.xyw);\n    return 0.25*log(rad2) * sqrt(rad2) / dr;\n}\n////////////////////////////////////////////////////////\n\n// DATA STRUCTS ////////////////////////////////////////\nstruct Ray\n{\n    vec3 o;\n    vec3 d;\n};\n    \nstruct Camera\n{\n    float fPersp;\n    vec3  pos, forward, up, right;\n};\n\nstruct Light\n{\n    int   type;\n    float range, intensity;\n    vec3  pos, dir;\n    vec3  color;\n};\n    \nstruct Shape\n{\n    int    type, blendType;\n    float  glossy, blendStrength;\n    vec2   radii; // SPHERE: X\n    \t\t\t  // TORUS: X=external, Y=internal\n    \t\t\t  // MANDELBULB: X=power, Y=limit\n    vec3   pos, scale;\n    vec4   color, normal;\n    mat3   rot;\n};\n    \nstruct RayIntersection\n{\n\tint   numIt;\n    float dist;\n    float shadow;\n    vec3  pos;\n    Ray   ray;\n    Shape shape;\n};\n    \nstruct Scene\n{\n    vec4 ambientLight;\n    Camera cam;\n    Light[NUM_LIGHTS] lights;\n    Shape[NUM_SHAPES] objects;\n};\n////////////////////////////////////////////////////////\n    \n// GLOBALS /////////////////////////////////////////////\nScene scene;\n////////////////////////////////////////////////////////",
+                    "name": "Common",
+                    "description": "",
+                    "type": "common"
+                }
+            ]
+        },
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "3X2GRK",
+                "date": "0",
+                "viewed": 0,
+                "name": "Mandelbulb Julia",
+                "description": "3D Fractal for Numerical Presentation (Tour of Scientific Computing) created by Godfred Doe",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "3d",
+                    "fractal",
+                    "mandelbulb",
+                    "freddoe"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "#define distfar 6.0\n#define iterations 4\n\nvec3 c;\n\nfloat calcfractal(vec3 coord) {\n    vec3 orbit = coord;\n    float dz = 1.0;\n    \n    for (int i=0; i<iterations; i++) {\n        \n        float r = length(orbit);\n    \tfloat o = acos(orbit.z/r);\n    \tfloat p = atan(orbit.y/orbit.x);\n        \n        dz = 8.0*r*r*r*r*r*r*r*dz;\n        \n        r = r*r*r*r*r*r*r*r;\n        o = 8.0*o;\n        p = 8.0*p;\n        \n        orbit = vec3( r*sin(o)*cos(p), r*sin(o)*sin(p), r*cos(o) ) + c;\n        \n        if (dot(orbit,orbit) > 4.0) break;\n    }\n    float z = length(orbit);\n    return 0.5*z*log(z)/dz;\n}\n\nvec2 map(vec3 p) {\n    return vec2(calcfractal(p.xzy),1.0);\n}\n\nvec3 trace(vec3 ro, vec3 rd) {\n    float t = 0.0;\n    for (float i = 0.0; i < 1000.0; i++) {\n        if (t>distfar) break;\n        vec2 h = map(ro + t*rd);\n        if (h.x < 0.0001) return vec3(t, h.y, i);\n        t += h.x;\n    }\n    return vec3(0.0);\n}\n\nvec3 calcnormal(vec3 p) {\n    vec2 e = vec2(0.0001,0.0);\n    vec3 n;\n    n.x = map(p+e.xyy).x - map(p-e.xyy).x;\n    n.y = map(p+e.yxy).x - map(p-e.yxy).x;\n    n.z = map(p+e.yyx).x - map(p-e.yyx).x;\n    return normalize(n);\n}\n\nfloat softshadow (vec3 ro, vec3 rd) {\n    float res = 1.0;\n    float t = 0.01;\n    for (float i = 0.0; i < 1000.0; i++) {\n        if (t>1.0) break;\n        vec2 h = map(ro + t*rd);\n        if (h.x < 0.0001) return 0.0;\n        res = min(res, 4.0*h.x/t);\n        t += h.x;\n    }\n    return res;\n}\n\n\nvoid mainImage( out vec4 fragColor, in vec2 fragCoord )\n{\n\tvec2 uv = fragCoord.xy / iResolution.xy;\n    uv = (2.0)*uv-1.0;\n    uv.x *= iResolution.x/iResolution.y;\n    \n    vec3 ro = vec3(0.0,0.0,-1.4);\n    vec3 rd = normalize(vec3(uv,1.5));\n    float the = 1.5*sin(iTime/30.0-1.0);\n    mat2 rmat = mat2(cos(the),sin(the),-sin(the),cos(the));\n    rd.yz *= rmat;\n    ro.yz *= rmat;\n    the = iTime/20.0;\n    rmat = mat2(cos(the),sin(the),-sin(the),cos(the));\n    rd.xz *= rmat;\n    ro.xz*= rmat;\n    c = vec3(0.6*sin(0.5*iTime),0.6*cos(0.784*iTime-1.203),0.6*sin(iTime*0.439485));\n    \n    vec3 t = trace(ro, rd);\n    \n    vec3 col = vec3(0.8);\n    \n    if (t.z > 0.0) {\n        vec3 pos = ro + rd*t.x;\n        vec3 nor = calcnormal(pos);\n        vec3 lig = normalize(vec3(0.3,1.0,0.3));\n        vec3 rdy = dot(nor, rd) * nor;\n        vec3 rdx = rd - rdy;\n        vec3 ref = rdx - rdy;\n        \n        float occ = clamp(0.0,1.0,1.0/(1.0+pow(t.z/30.0,3.0)));\n        float sha = softshadow(pos, lig);\n        float dif = max(0.0,dot(lig,nor));\n        float sky = max(0.0,nor.y);\n        float ind = max(0.0,dot(-lig,nor));\n        float spec = pow( max(0.0,dot(ref,lig)) , 20.0);\n        \n        col  = dif*vec3(0.9,0.8,0.7)*vec3(sha);\n        col += sky*vec3(0.16,0.20,0.24)*occ;\n        col += ind*vec3(0.40,0.48,0.40)*occ;\n        col += 0.1*occ;\n        col += spec*sha*vec3(0.9,0.8,0.7);\n        \n        col = pow(col,vec3(0.45));\n    }\n    \n\tfragColor = vec4(col,1.0);\n    \n}",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                }
+            ]
+        },
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "3X23RK",
+                "date": "0",
+                "viewed": 0,
+                "name": "Mandelbulb Oily",
+                "description": "Mandelbulb created by Fred Doe for Numerical Analysis",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "3d",
+                    "fractal",
+                    "mandelbulb",
+                    "freddoe"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "#define LIGHTCOL vec3(1.f, 0.9f, 0.8f)\n#define O_COLOR  vec3(0.5f, 0.7f, 1.f)\n#define LIGHTDIR vec3(1.f, 1.f, 1.f)\n#define B_COLOR  vec3(0.8f, 0.7f, 0.6f)\n\nmat3 ident(){\n    return mat3(vec3(1., 0., 0.),\n                vec3(0., 1., 0.),\n                vec3(0., 0., 1.));\n}\n\nmat3 rotatorXAxis(in float dRotation){\n    return mat3(vec3(1., 0., 0),\n                vec3(0., cos(radians(dRotation)), sin(radians(dRotation))),\n                vec3(0., -sin(radians(dRotation)), cos(radians(dRotation))));\n}\n\nmat3 rotatorYAxis(in float dRotation){\n    return mat3(vec3(cos(radians(dRotation)), 0., -sin(radians(dRotation))),\n                vec3(0., 1., 0.),\n                vec3(sin(radians(dRotation)), 0., cos(radians(dRotation))));\n}\n\nfloat mandelbulb(vec3 pos){\n    vec3 v = pos;\n    vec3 c = v;\n    float n = 6.f * (sin(iTime * 0.02f) * 0.5f + 0.5f) + 2.f;\n    float dr = 1.f;\n    float nextR = length(v);\n    float r, phi, theta, iX, iY, iZ, rN;\n    \n    for(int i = 0; i < 6; i++){\n        r = length(v);\n        if(r > 3.f){\n            break;\n        }\n        phi = atan(v.y, v.x);\n        theta = acos(v.z / r) + iTime * 0.25f;\n        \n        iX = sin(n * theta) * cos(n * phi);\n        iY = sin(n * theta) * sin(n * phi);\n        iZ = cos(n * theta);\n        \n        rN = pow(r, n);\n        v = rN * vec3(iX, iY, iZ) + c;\n        \n        dr = pow(r, n - 1.f) * n * dr + 1.f;\n    }\n    \n    return 0.5f * log(r) * r / dr;\n}\n\nvec4 rayMarching(vec3 startPos, vec3 rayDir, int maxSteps){\n    vec3 curPos = startPos;\n    float curSDF = mandelbulb(curPos);\n    float depth = 0.f;\n    for(int i = 0; i < maxSteps; i++){\n        if(curSDF < 0.00000f || depth > 10.f){\n            break;\n        }\n        curPos += curSDF * rayDir;\n        depth += curSDF;\n        \n        curSDF = mandelbulb(curPos);\n    }\n    \n    return vec4(curPos, depth);\n}\n\nvec3 normal(vec3 pos){\n    vec3 offset = vec3(0.01f, 0.f, 0.f);\n    \n    return normalize(vec3(mandelbulb(pos + offset.xyz) - mandelbulb(pos - offset.xyz), \n                          mandelbulb(pos + offset.yxz) - mandelbulb(pos - offset.yxz), \n                          mandelbulb(pos + offset.yyx) - mandelbulb(pos - offset.yyx)));\n}\n\nvec3 lambert(vec3 nor){\n    vec3 lightDir = normalize(LIGHTDIR);\n    float shadow = dot(nor, lightDir) * 0.5 + 0.5;\n    \n    return shadow * O_COLOR * LIGHTCOL;\n}\n\nvec3 phong(vec3 nor,vec3 camDir){\n    vec3 lightDir = normalize(LIGHTDIR);\n    vec3 h = normalize(lightDir + camDir);\n    float gloss = 50.f;\n    vec3 phong = LIGHTCOL * O_COLOR * pow(max(dot(nor, h), 0.f), gloss);\n    \n    return phong;\n}\n\nvoid mainImage( out vec4 fragColor, in vec2 fragCoord )\n{\n    vec2 VF = (fragCoord - iResolution.xy / 2.f) / min(iResolution.x, iResolution.y);\n    vec3 dir = normalize(vec3(VF, 1.f));\n    vec3 startPos = vec3(0.f, 0.f, -3.f);\n    \n    mat3 rotator = rotatorYAxis(radians(iTime * 360.f * 5.f));\n    dir *= rotator;\n    startPos *= rotator;\n    \n    vec4 mandelbulbDate = rayMarching(startPos, dir, 255);\n    \n    vec3 nor = normal(mandelbulbDate.xyz);\n    \n    vec3 lambert = lambert(nor);\n    vec3 phong = phong(nor, -dir);\n    vec3 col = lambert + phong;\n    float background = float(mandelbulbDate.w < 10.f);\n    vec3 b_Col = (1.f - background) * B_COLOR;\n    fragColor = vec4(vec3(col * background + b_Col), 1.f);\n}",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                }
+            ]
+        },
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "33j3zK",
+                "date": "0",
+                "viewed": 0,
+                "name": "Vortex - Hypnotic",
+                "description": "Created by Fred Doe for Numerical Presentation",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "raymarching",
+                    "fractals",
+                    "vortex",
+                    "freddoe"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "void mainImage( out vec4 fragColor, in vec2 fragCoord )\n{\n    // Normalized pixel coordinates (from 0 to 1)\n    vec2 uv = (fragCoord-0.5*iResolution.xy)/iResolution.y;\n\n    float t = iTime * .2;\n\n    vec3 ro = vec3(0, 0, -1);\n    vec3 lookat = vec3(0);\n    float zoom = mix(.2, .7, sin(t * 10.) * .5 + .7);\n    \n    vec3 f = normalize(lookat - ro),\n        r = normalize(cross(vec3(0, 1, 0), f)),\n        u = cross(f, r),\n        c = ro + f * zoom,\n        i = c + uv.x * r + uv.y * u,\n        rd = normalize(i-ro);\n    \n   \n    float dS, dO;\n    vec3 p;\n    \n    for(int i = 0; i<100; i++)\n    {\n        p = ro + rd * dO;\n        dS = -(length(vec2(length(p.xz) - 1., p.y)) - .75);//dist function of torus\n        if(dS < .001) break;\n        dO += dS;\n    }\n    \n    //vec3 col = vec3(1.000,0.424,0.278);\n    vec3 col = vec3(0.000,0.000,0.000);\n    \n    if(dS < .001)\n    {\n        float x = atan(p.x, p.z) + t;               //-pi to pi\n        float y = atan(length(p.xz)-1., p.y);\n        \n        float bands = sin(y * 10. + x * 30.);\n        \n        float ripples = sin((x * 10. + -y * 30.) * 3.) * .5 + .5;\n        \n        float waves = sin(x * 2. + -y * 6. + t*40.);\n        \n        float b1 = smoothstep(-.2, .2, bands);\n        float b2 = smoothstep(-.2, .2, bands - 0.5);\n        \n        float m = b1 * (1. -b2);\n        m += max(m, ripples * b2 * max(0., waves));\n        m += max(0., waves) * b2;\n        //col += 1. - m;\n        col += mix(m, 1.-m, smoothstep(-.3, .3, sin(x *2. + t)));\n    }\n\n    // Output to screen\n    fragColor = vec4(col,1.0);\n}",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                }
+            ]
+        },
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "W323zK",
+                "date": "0",
+                "viewed": 0,
+                "name": "Vortex Kaleidoscope",
+                "description": "Vortex for Numerical Presentation created by Godfred Doe",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "3d",
+                    "fractal",
+                    "vortex",
+                    "freddoe"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "// https://youtube.com/shorts/RMB6iJB3KfY?feature=share\nvec3 palette(float d) {\n    return mix(vec3(0.1, 0.5, 0.7), vec3(0.9, 0.2, 0.6), d);\n}\n\nvec2 rotate(vec2 p, float a) {\n    float c = cos(a);\n    float s = sin(a);\n    return p * mat2(c, s, -s, c);\n}\n\nfloat map(vec3 p) {\n    for (int i = 0; i < 10; ++i) {\n        float t = iTime * 0.3;\n        p.xz = rotate(p.xz, t);\n        p.xy = rotate(p.xy, t * 1.5);\n        p.xz = abs(p.xz);\n        p.xz -= 0.5;\n    }\n    return length(p) - 0.5;\n}\n\nvec4 rm(vec3 ro, vec3 rd) {\n    float t = 0.0;\n    vec3 col = vec3(0.0);\n    float d;\n    for (float i = 0.0; i < 128.0; i++) {\n        vec3 p = ro + rd * t;\n        d = map(p);\n        if (d < 0.01) {\n            break;\n        }\n        if (d > 100.0) {\n            break;\n        }\n        col += palette(length(p) * 0.1) / (400.0 * d);\n        t += d;\n    }\n    return vec4(col, 1.0 / (d * 100.0));\n}\n\nvoid mainImage(out vec4 fragColor, in vec2 fragCoord) {\n    vec2 uv = (fragCoord - (iResolution.xy / 2.0)) / iResolution.x;\n    vec3 ro = vec3(0.0, 0.0, -50.0);\n    ro.xz = rotate(ro.xz, iTime);\n    vec3 cf = normalize(-ro);\n    vec3 cs = normalize(cross(cf, vec3(0.0, 1.0, 0.0)));\n    vec3 cu = normalize(cross(cf, cs));\n\n    vec3 uuv = ro + cf * 3.0 + uv.x * cs + uv.y * cu;\n\n    vec3 rd = normalize(uuv - ro);\n\n    vec4 col = rm(ro, rd);\n\n    fragColor = col;\n}",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                }
+            ]
+        },
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "33jGRV",
+                "date": "0",
+                "viewed": 0,
+                "name": "Vortex Wavy",
+                "description": "Vortex for Numerical Presentation created by Godfred Doe",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "raymarching",
+                    "fractals",
+                    "vortex",
+                    "freddoe"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "const float PI = 3.14159265358979323846264;\nconst float TWOPI = PI*2.0;\nconst vec4 WHITE = vec4(1.0, 1.0, 1.0, 1.0);\nconst vec4 BLACK = vec4(0.0, 0.0, 0.0, 1.0);\nconst int MAX_RINGS = 30;\nconst float RING_DISTANCE = 0.05;\nconst float WAVE_COUNT = 60.0;\nconst float WAVE_DEPTH = 0.04;\n\nvoid mainImage( out vec4 fragColor, in vec2 fragCoord )\n{\n    float rot = mod(iTime*0.6, TWOPI);\n    vec2 pos = vec2(fragCoord.x / iResolution.x, fragCoord.y / iResolution.y);\n    pos = vec2(3.0*(pos.x - 0.5), 2.0*(pos.y - 0.5));\n    float x = pos.x;\n    float y = pos.y;\n\n    bool black = false;\n    float prevRingDist = RING_DISTANCE;\n    for (int i = 0; i < MAX_RINGS; i++) {\n        vec2 center = vec2(0.0, 0.7 - RING_DISTANCE * float(i)*1.2);\n        float radius = 0.5 + RING_DISTANCE / (pow(float(i+5), 1.1)*0.006);\n        float dist = distance(center, pos);\n        dist = pow(dist, 0.3);\n        float ringDist = abs(dist-radius);\n        if (ringDist < RING_DISTANCE*prevRingDist*7.0) {\n            float angle = atan(y - center.y, x - center.x);\n            float thickness = 1.1 * abs(dist - radius) / prevRingDist;\n            float depthFactor = WAVE_DEPTH * sin((angle+rot*radius) * WAVE_COUNT);\n            if (dist > radius) {\n                black = (thickness < RING_DISTANCE * 5.0 - depthFactor * 2.0);\n            }\n            else {\n                black = (thickness < RING_DISTANCE * 5.0 + depthFactor);\n            }\n            break;\n        }\n        if (dist > radius) break;\n        prevRingDist = ringDist;\n    }\n\n    fragColor = black ? BLACK : WHITE;\n}",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                }
+            ]
+        },
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "3XjGRV",
+                "date": "0",
+                "viewed": 0,
+                "name": "Vortex - Warp",
+                "description": "Vortex for Numerical Presentation created by Godfred Doe",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "raymarching",
+                    "fractals",
+                    "vortex",
+                    "freddoe"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "#define PI     3.14159265358\n#define TWO_PI 6.28318530718\n\nvoid mainImage( out vec4 fragColor, in vec2 fragCoord )\n{\n    float time = iTime * 1.;\t\t\t\t\t\t\t\t\t// adjust time\n    vec2 uv = (2. * fragCoord - iResolution.xy) / iResolution.y;\t// center coordinates\n    float rads = atan(uv.x, uv.y);                   \t\t\t\t// get radians to center\n\tfloat dist = length(uv);\t\t\t\t\t\t\t\t\t\t// store distance to center\n    float spinAmp = 4.;\t\t\t\t\t\t\t\t\t\t\t\t// set spin amplitude\n    float spinFreq = 2. + sin(time) * 0.5;\t\t\t\t\t\t\t// set spin frequency\n    rads += sin(time + dist * spinFreq) * spinAmp;\t\t\t\t\t// wave based on distance + time\n    float radialStripes = 10.;\t\t\t\t\t\t\t\t\t\t// break the circle up\n    float col = 0.5 + 0.5 * sin(rads * radialStripes);\t\t\t\t// oscillate color around the circle\n\tcol = smoothstep(0.5,0.6, col);\t\t\t\t\t\t\t\t\t// remap color w/smoothstep to remove blurriness\n    col -= dist / 2.;\t\t\t\t\t\t\t\t\t\t\t\t// vignette - reduce color w/distance\n    fragColor = vec4(vec3(col), 1.);\n}",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                }
+            ]
+        },
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "WXjGRV",
+                "date": "0",
+                "viewed": 0,
+                "name": "Vortex - Signals",
+                "description": "Vortex for Numerical Presentation created by Godfred Doe",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "raymarching",
+                    "fractals",
+                    "vortex",
+                    "freddoe"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "#define R mat2(cos(vec4(0,11,33,0)\n\nvoid mainImage(out vec4 O, vec2 F) {\n    \n    vec3    V             = iResolution, \n              o           ;\n    float       r         = iTime,\n                  t       = .1, \n                    e     , \n                      x   ;\n\n    for (O *= e; e++ < 40.;\n        \n        o.y += t*t*.09,\n        o.z = mod(o.z + r, .2) - .1,\n        x = t*.06 - r*.2,\n        \n        o.x = fract(\n            o.xy *= R+round((atan(o.y, o.x) - x) / .314) * .314 + x))\n        ).x - .8,\n        \n        t += x = length(o)*.5 - .014,\n        \n        O += (1. + cos(t*.5 + r + vec4(0,1,2,0)))\n           * (.3 + sin(3.*t + r*5.)/4.)\n           / (8. + x*4e2)\n    )\n        o = t * normalize(vec3((F+F-V.xy)*R+r*.15)),V.y));\n}",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                }
+            ]
+        },
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "WX23RV",
+                "date": "0",
+                "viewed": 0,
+                "name": "Vortex - Duality",
+                "description": "Vortex for Numerical Presentation created by Godfred Doe",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "raymarching",
+                    "fractals",
+                    "vortex",
+                    "freddoe"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "// **************************************************************************\n// CONSTANTS\n\n#define PI 3.14159\n#define TWO_PI 6.28318\n\n// **************************************************************************\n// TWEAK PARAMS for fun\n\n// Increasing number of lights requires more compute power\n#define NUM_LIGHTS 3.\n\n// Decreasing min cellsize requires more compute power and you\n// will also need to increase the number of march iterations, \n// don't pick a min cell size less than 1. \n\n#define MIN_CELLSIZE 2.\n#define CELLSIZE_RANGE 1.\n#define NUM_MARCH_ITERS 120\n\n\n// **************************************************************************\n// GLOBALS\n\nfloat g_time         = 0.;\n\nvec3  g_camPointAt   = vec3(0.);\nvec3  g_camOrigin    = vec3(0.);\n\nmat2  g_rotateVortex = mat2(1.);\n\n// **************************************************************************\n// UTILITIES\n\n// Rotate the input point around the y-axis by the angle given as a  cos(angle)\n// and sin(angle) argument.  There are many times where  I want to reuse the\n// same angle on different points, so why do the  heavy trig twice. Range of\n// outputs := ([-1.,-1.,-1.] -> [1.,1.,1.])\nvec3 rotateAroundYAxis( vec3 point, float cosangle, float sinangle )\n{\n    return vec3(point.x * cosangle  + point.z * sinangle,\n                point.y,\n                point.x * -sinangle + point.z * cosangle);\n}\n\n// Returns the vector that is the shortest path from the 3D point to the  line\n// that passes through a and b. Also returns the parameter t that represents the\n// paramterized position along the line that p is closest to.\n\n// Returned result is:\n\n// result.xyz := vector of the path from p to q where q is defined as the point\n// on the line segment that is closest to p.\n// result.w   := the t parameter such that a + (b-a) * t = q \n\nvec4 lineToPointDistance( vec3 a, vec3 b, vec3 p)\n{\n    \n    vec3 ba = b - a;    \n    float t = dot(ba, (p - a)) / dot(ba, ba);\n    vec4 result = vec4(ba * t + a - p, t);\n    return result;\n}\n\n// **************************************************************************\n// SHADING\n\nvec2 light_swirl( float py, float idx )\n{\n    float t = smoothstep(50., 0., abs(py));\n    float rad = mix(10., 30., t * t);\n    float off = TWO_PI * idx/NUM_LIGHTS;\n    float rot = .05 + .05 * (smoothstep(0., 1., mod(g_time, 40.)) - smoothstep(20., 21., mod(g_time, 40.)));\n\n    float ang = rot * py - 1. * g_time + off;\n    return rad * vec2(sin(ang), cos(ang));\n}\n\nfloat light_offset( float idx )\n{\n    return mod(.19 * g_time, 1.);\n}    \n\nvec3 light_pos( float idx )\n{\n\n    float lposy = 80. - 160. * light_offset(idx);\n    vec3 warpp = vec3(0., lposy, 0.);\n    warpp.xz -= light_swirl(lposy, idx);\n\n    return warpp ;  \n}\n\nvec4 light_col( float py )\n{\n    float pitfade = smoothstep(80., 50., abs(py));\n    return pitfade * vec4(.6,.8,1.,1.);\n}\n\nfloat wave_pulses(vec3 pos)\n{\n    float lookup = mod(.001 * length(pos.xz) - sign(pos.y) * .009*g_time, 1.);\n    return texture(iChannel0, vec2(lookup, .5)).g;\n}\n\nvec3 shade_surface(vec3 vdir, vec3 pos, vec3 norm, vec2 uv, float alpha)\n{\n    \n    //vec3 basecol = mix(vec3(1., .3, .3),vec3(.3, .8, 1.), s);\n    vec3 basecol = mix(vec3(.9, 1., 1.2), vec3(.4, .7, 1.), alpha);\n\n    float wav = wave_pulses( pos );\n    vec3 scol = vec3(.3 + .7 * wav);\n    scol *= 1. - .5 * length(uv - .5);\n    scol += vec3(pow(length(uv - .5), 3.)); \n    scol *= basecol;\n    \n    // would expect reflect to return a normalized vector if the\n    // 2 vectors provided are normalized.  That's not the case at\n    // extreme angles, so I have to normalize again.\n    vec3 refldir = normalize(reflect(vdir, norm));\n\n    vec3 icol = vec3(0.);\n    for (float lidx = 0.; lidx < NUM_LIGHTS; lidx += 1.) \n    {\n        vec3 lpos = light_pos(lidx);\n        vec3 lcol = light_col(lpos.y).rgb;\n        \n        vec3 ldir = lpos - pos; float llen = length(ldir); \n        ldir = normalize(ldir);\n        float ndl = max(0., dot(ldir, norm));            \n\n        float diff = 600. * ndl * (1./(llen*llen));\n        float spec = 5. * (1./llen) * pow(max(0., dot(refldir , ldir)), 5.);\n\n        icol += lcol * (diff + spec);\n    }\n\n    icol += vec3(.02); // ambient\n    icol += .1 * wav; // glow\n\n    return icol * scol;\n}\n\nvec4 shade_light(vec3 pos, vec2 uv, vec4 l2pres, float idx)\n{    \n    float lt = light_offset(idx);\n    \n    vec2 lspace = vec2(length(l2pres.xyz), l2pres.w);\n    vec4 rgba = vec4(0.);         \n    float lpres = smoothstep(lt-.15, lt, lspace.y) - smoothstep(lt, lt+.04, lspace.y);\n    lpres *= smoothstep(-1., 4., lspace.x);\n    \n    float lposy = 80. - 160. * lt;\n\n    rgba.rgb = 2. * lpres * light_col(lposy).rgb;    \n    rgba.rgb *= vec3(1. - length(uv - .5));\n\n    rgba.a = lpres;\n    \n    return rgba;\n}\n\n// **************************************************************************\n// MARCHING\n\n// References for DDA marching:\n// original tutorial:  http://lodev.org/cgtutor/raycasting.html\n// initial shadertoy reference by fb39ca4: https://www.shadertoy.com/view/4dX3zl\n// optimization by iq: https://www.shadertoy.com/view/4dfGzs\n\nfloat vortex_map(vec3 p)\n{   \n    vec3 ap = abs(p);\n    float cellmap = 0.;\n\n    // pits\n    float lxz = length(ap.xz);  \n    float plxz = pow(lxz, .65);\n    \n    // make sure for the region of log that's undefined (plxz < 8.),\n    // we use a constant. cap the pit.\n\n    float threshold = mix(100., -log( plxz - 8.), step(8., plxz));\n    threshold += 3. * (1. - wave_pulses(p));\n    cellmap = smoothstep(threshold-1., threshold+2., .25 * (ap.y-12.));\n    \n    // walls    \n    cellmap = max(cellmap, mix(smoothstep(0., 20., lxz - 80. + .05 * ap.y * ap.y), 0., step(lxz,50.)));\n\n    return cellmap;\n}\n\n\nvoid dda_march( vec3 ro, vec3 rd,\n                out vec4 hitrgba)\n{\n    float cellsize = MIN_CELLSIZE + step(20., iTime) * CELLSIZE_RANGE * (smoothstep(0., 2., mod(iTime, 20.)) - \n                                                                               smoothstep(10., 12., mod(iTime, 20.)));\n\n    vec3 rro = ro; rro.xz *= g_rotateVortex;\n    vec3 rrd = rd; rrd.xz *= g_rotateVortex;\n\n    vec3 cellpos = cellsize * floor(rro * (1./cellsize));    \n    vec3 rs = sign(rrd);\n    vec3 deltaDist = cellsize/rrd; \n    vec3 sideDist = ((cellpos-rro)/cellsize + 0.5 + rs * 0.5) * deltaDist;    \n    \n    hitrgba = vec4(0.);\n\n    float t = 1e10;\n\n    vec3 murkcol = vec3(0.01, 0.01, 0.015);\n    for( int iter=0; iter<NUM_MARCH_ITERS; iter += 1 ) \n    {\n        // optimize out of loop if we've already accumulated enough surface info\n        if (hitrgba.a > .95) { continue; }\n\n        // increment dda marching mm := march mask\n        vec3 mm = step(sideDist.xyz, sideDist.yxy) * step(sideDist.xyz, sideDist.zzx);        \n        vec3 norm = -mm * rs;\n        cellpos += cellsize * mm * rs;  \n\n        // VORTEX chamber \n        float mapres = vortex_map( cellpos );\n                  \n        float valpha = smoothstep(0., 1., mapres);\n\n        if (valpha > 0.) {\n            // intersect the cube            \n            vec3 mini = ((cellpos-rro)/cellsize + 0.5 - 0.5*vec3(rs))*deltaDist;\n            t = max ( mini.x, max ( mini.y, mini.z ) );\n\n            vec3 pos = rro + rrd*t;\n            vec3 uvw = pos - cellpos;\n            vec2 uv = vec2( dot(mm.yzx, uvw), dot(mm.zxy, uvw) )/cellsize;\n            vec3 vdir = normalize(pos - rro);\n            vec3 surfcol = shade_surface(vdir, cellpos, norm, uv, valpha);\n            \n            float dfog = .1 + .9 * smoothstep(140., 80., t);            \n            float pitmurk = smoothstep(50., 80., abs(pos.y));\n\n            hitrgba.rgb += mix(dfog * surfcol, murkcol, pitmurk) * (1. - hitrgba.a) * valpha;\n            hitrgba.a += (1. - hitrgba.a) * valpha;\n\n        }\n\n        // optimize out of loop\n        if (hitrgba.a > .95) { continue; }\n\n        // XXX: Frustrating ANGLE lesson.  I had a version with the map\n        // function that calculated the cell walls and the lights together\n        // then I used a material id to inform the final shading (so I didn't\n        // have to duplicate code).  Map returned a vec2 with the alpha of\n        // the current cell and the id.  Worked great on Mac, but ANGLE could\n        // only spew black, so I had to unroll the code here. \n        // Lesson learned, code duplicated.\n\n        // LIGHTS\n        float lightalpha = 0.;\n        float lightidx = 0.;\n        vec4  lightl2pres = vec4(0.);\n        \n        for (float lidx = 0.; lidx < NUM_LIGHTS; lidx += 1.)\n        {\n\n            vec3 warpcellp = vec3( cellpos );\n            warpcellp.xz += light_swirl( cellpos.y, lidx );\n            vec4 l2pres = lineToPointDistance(vec3(0., 80., 0.), vec3(0., -80.0, 0.), warpcellp);\n            float lalpha = smoothstep(0., 8., 8. - length(l2pres.xyz));\n\n            if (lalpha >= lightalpha)\n            {\n                lightalpha = lalpha;\n                lightidx = lidx;\n                lightl2pres = l2pres;\n            }\n    \n        }\n        \n        if (lightalpha > 0.)\n        {\n            // intersect the cube        \n            vec3 mini = ((cellpos-rro)/cellsize + 0.5 - 0.5*vec3(rs))*deltaDist;\n            t = max ( mini.x, max ( mini.y, mini.z ) );\n            \n            vec3 pos = rro + rrd*t;\n            vec3 uvw = pos - cellpos;\n            vec2 uv = vec2( dot(mm.yzx, uvw), dot(mm.zxy, uvw) )/cellsize;\n    \n            float pitmurk = smoothstep(50., 80., abs(pos.y));\n            vec4 lcol = shade_light(cellpos, uv, lightl2pres, lightidx);\n            hitrgba += mix(lcol, vec4(murkcol, 1.), pitmurk) * (1. - hitrgba.a) * lightalpha;\n        }\n    \n        sideDist += mm * rs * deltaDist;  \n\n    }    \n\n}\n\n// **************************************************************************\n// CAMERA & GLOBALS\n\nvoid animate_globals()\n{\n    // remap the mouse click ([-1, 1], [-1/ar, 1/ar])\n    vec2 click = iMouse.xy / iResolution.xx;    \n    click = 2.0 * click - 1.0;  \n    \n    g_time = iTime;\n\n    // camera position\n    g_camOrigin = vec3(0., 0., 65.);    \n    float rotateYAngle    =  1. * TWO_PI * click.x;\n    float cosRotateYAngle = cos(rotateYAngle);\n    float sinRotateYAngle = sin(rotateYAngle);\n\n    g_camPointAt   = vec3(0., 15. * sin(.2 * g_time + PI - PI * click.y), 0.);\n\n    // truck the camera towards and away from vortex center\n    g_camOrigin.z  -= 55. * (.5 * sin(.1 * g_time + PI) + .5);\n\n    // Rotate the camera around the origin\n    g_camOrigin    = rotateAroundYAxis(g_camOrigin, cosRotateYAngle, sinRotateYAngle);\n    \n    float vt = -.2 * g_time;\n    g_rotateVortex = mat2(cos(vt), sin(vt), -sin(vt), cos(vt));\n    \n}\n\nstruct CameraData\n{\n    vec3 origin;\n    vec3 dir;\n    vec2 st;\n    float vignet;\n};\n\nCameraData setup_camera( in vec2 fragCoord )\n{\n\n    // aspect ratio\n    float invar = iResolution.y / iResolution.x;\n    vec2 st = fragCoord.xy / iResolution.xy - .5;\n    st.y *= invar;\n\n    // calculate the ray origin and ray direction that represents\n    // mapping the image plane towards the scene\n    vec3 iu = vec3(0., 1., 0.);\n\n    vec3 iz = normalize( g_camPointAt - g_camOrigin );\n    vec3 ix = normalize( cross(iz, iu) );\n    vec3 iy = cross(ix, iz);\n\n    vec2 uv = st*0.5+0.5;\n    float vignet = pow(10.0*uv.x*uv.y*(1.0-uv.x)*(1.0-uv.y),1.8);\n    \n    vec3 dir = normalize( st.x*ix + st.y*iy + vignet * iz );\n\n    return CameraData(g_camOrigin, dir, st, vignet);\n\n}\n\n// **************************************************************************\n// MAIN\n\nvoid mainImage( out vec4 fragColor, in vec2 fragCoord )\n{   \n    \n    // ----------------------------------\n    // Animate globals\n\n    animate_globals();\n\n    // ----------------------------------\n    // Setup Camera\n\n    CameraData cam = setup_camera( fragCoord );\n\n    // ----------------------------------\n    // SCENE MARCHING\n    vec3 scenecol = vec3(0.);\n\n    vec4 hitrgba;\n    dda_march( cam.origin, cam.dir, hitrgba);\n\n    scenecol = hitrgba.rgb * hitrgba.a;\n    // ----------------------------------\n    // POST PROCESSING    \n\n    // Brighten\n    scenecol *= 1.3;\n    \n    // Gamma correct\n    scenecol = pow(scenecol, vec3(0.45));\n        \n\t// increase saturation\n\tscenecol = mix( scenecol, vec3(dot(scenecol,vec3(0.333))), -.3 );\n\n\t\n    fragColor.rgb = scenecol;\n    fragColor.a = 1.;\n}\n",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                }
+            ]
+        },
+        {
+            "ver": "0.1",
+            "info": {
+                "id": "332GzV",
+                "date": "0",
+                "viewed": 0,
+                "name": "Vortex - Spiral Whirlpool",
+                "description": "Created by Godfred Doe for Numerical Analysis presentation",
+                "likes": 0,
+                "published": "Private",
+                "usePreview": 0,
+                "tags": [
+                    "raymarching",
+                    "fractals",
+                    "vortex",
+                    "whirlpool",
+                    "freddoe"
+                ]
+            },
+            "renderpass": [
+                {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "4dfGRr",
+                            "channel": 0
+                        }
+                    ],
+                    "code": "#define T (iTime*5.)\n#define A(v) mat2(cos(m.v*3.1416 + vec4(0, -1.5708, 1.5708, 0)))       // rotate\n#define H(v) (cos(((v)+.5)*6.2832 + radians(vec3(60, 0, -60)))*.5+.5)  // hue\n\nfloat map(vec3 u)\n{\n    float t = T,    // speed\n          l = 5.,   // loop to reduce clipping\n          w = 40.,  // z warp size\n          s = .4,   // object size (max)\n          f = 1e20, i = 0., y, z;\n    \n    u.yz = -u.zy;\n    u.xy = vec2(atan(u.x, u.y), length(u.xy));  // polar transform\n    u.x += t/6.;                                // counter rotation\n    \n    vec3 p;\n    for (; i++<l;)\n    {\n        p = u;\n        y = round(max(p.y-i, 0.)/l)*l+i;  // segment y & skip rows\n        p.x *= y;                         // scale x with rounded y\n        p.x -= sqrt(y*t*t*2.);            // move x\n        p.x -= round(p.x/6.2832)*6.2832;  // segment x\n        p.y -= y;                         // move y\n        p.z += sqrt(y/w)*w;               // curve inner z down\n        z = cos(y*t/50.)*.5+.5;           // radial wave\n        p.z += z*2.;                      // wave z\n        p = abs(p);\n        f = min(f, max(p.x, max(p.y, p.z)) - s*z);  // cubes\n    }\n    \n    return f;\n}\n\nvoid mainImage( out vec4 C, in vec2 U )\n{\n    float l = 50.,  // loop\n          i = 0., d = i, s, r;\n    \n    vec2 R = iResolution.xy,\n         m = iMouse.z > 0. ?  // clicking?\n               (iMouse.xy - R/2.)/R.y:  // mouse coords\n               vec2(0, -.17);           // default (noclick)\n    \n    vec3 o = vec3(0, 20, -120),  // camera\n         u = normalize(vec3(U - R/2., R.y)),  // 3d coords\n         c = vec3(0), p;\n    \n    mat2 v = A(y),  // pitch\n         h = A(x);  // yaw\n    \n    for (; i++<l;)  // raymarch\n    {\n        p = u*d + o;\n        p.yz *= v;\n        p.xz *= h;\n        \n        s = map(p);\n        r = (cos(round(length(p.xz))*T/50.)*.7 - 1.8)/2.;  // color gradient\n        c += min(s, exp(-s/.07))  // black & white\n           * H(r+.5) * (r+2.4);      // color\n        \n        if (s < 1e-3 || d > 1e3) break;\n        d += s*.7;\n    }\n    \n    C = vec4(exp(log(c)/2.2), 1);\n}",
+                    "name": "Image",
+                    "description": "",
+                    "type": "image"
+                }
+            ]
+        }
+    ]
+}
