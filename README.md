@@ -4,7 +4,14 @@
  - Python
  - GLSL
  - Taichi
- - Shadertoy
+ - Shadertoy [Access Here](https://www.shadertoy.com/)
+
+## VSCode Extensions Required for GLSL Files Locally (Optional if you will use the shadertoy online platform)
+It is however recommended to run the `.glsl` files on the  `Shadertoy` online platform. 
+Just copy and paste the code as a new shader to see the shapes.
+
+- WebGL GLSL Editor
+- GLSL Canvas (glsl-canvas)
 
 
 ## Virtual Environment
