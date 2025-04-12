@@ -1,10 +1,10 @@
 # FRACTALS AND CHAOS MEET RECURSION: 2D FRACTALS, MANDELBULBS, AND VORTEX
 
 ## Programming Languages and Tools Required for Project
- - Python
- - GLSL
- - Taichi
- - Shadertoy [Access Here](https://www.shadertoy.com/)
+ - [Python](https://www.python.org/)
+ - [GLSL](https://www.opengl.org/)
+ - [Taichi](https://www.taichi-lang.org/)
+ - [Shadertoy](https://www.shadertoy.com/)
 
 ## VSCode Extensions Required for GLSL Files Locally (Optional if you will use the shadertoy online platform)
 It is however recommended to run the `.glsl` files on the  `Shadertoy` online platform. 
