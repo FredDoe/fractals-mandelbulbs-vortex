@@ -23,7 +23,7 @@ def paint(t: float):
         pixels[i, j] = 1 - iterations * 0.02
 
 
-gui = ti.GUI("Spiral Fractal Set ", res=(n * 2, n))
+gui = ti.GUI("Julia Set ", res=(n * 2, n))
 
 for i in range(1000000):
     paint(i * 0.03)
