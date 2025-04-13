@@ -57,7 +57,7 @@ def render(time: ti.f32):
 def main():
     gui = ti.GUI("Mandelbrot set zoom", res=(width, height))
     for i in range(100000):
-        render(i * 0.4)  # Speed
+        render(i * 0.2)  # Speed
         gui.set_image(pixels)
         gui.show()
 
